@@ -40,9 +40,6 @@ termux_step_setup_variables() {
 		fi
 	fi
 	TERMUX_PKG_BUILDER_SCRIPT=$TERMUX_PKG_BUILDER_DIR/build.sh
-	if test ! -f "$TERMUX_PKG_BUILDER_SCRIPT"; then
-		termux_error_exit "No build.sh script at package dir $TERMUX_PKG_BUILDER_DIR!"
-	fi
 
 	if [ "x86_64" = "$TERMUX_ARCH" ] || [ "aarch64" = "$TERMUX_ARCH" ]; then
 		TERMUX_ARCH_BITS=64
@@ -114,9 +111,31 @@ termux_step_setup_variables() {
 	TERMUX_PKG_FORCE_CMAKE=no # if the package has autotools as well as cmake, then set this to prefer cmake
 
 	unset CFLAGS CPPFLAGS LDFLAGS CXXFLAGS
+
+	rm -Rf "$TERMUX_PKG_BUILDDIR" \
+		"$TERMUX_PKG_PACKAGEDIR" \
+		"$TERMUX_PKG_SRCDIR" \
+		"$TERMUX_PKG_TMPDIR" \
+		"$TERMUX_PKG_MASSAGEDIR"
+
+	mkdir -p "$TERMUX_COMMON_CACHEDIR" \
+		"$TERMUX_DEBDIR" \
+		 "$TERMUX_PKG_BUILDDIR" \
+		 "$TERMUX_PKG_PACKAGEDIR" \
+		 "$TERMUX_PKG_TMPDIR" \
+		 "$TERMUX_PKG_CACHEDIR" \
+		 "$TERMUX_PKG_MASSAGEDIR" \
+		 $TERMUX_PREFIX/{bin,etc,lib,libexec,share,tmp,include}
 }
 
 termux_step_setup_toolchain() {
+
+	TERMUX_STANDALONE_TOOLCHAIN="$TERMUX_TOPDIR/_lib/${TERMUX_NDK_VERSION}-${TERMUX_ARCH}-${TERMUX_PKG_API_LEVEL}"
+	# Bump the below version if a change is made in toolchain setup to ensure
+	# that everyone gets an updated toolchain:
+	TERMUX_STANDALONE_TOOLCHAIN+="-v11"
+
+
 	# We put this after system PATH to avoid picking up toolchain stripped python
 	export PATH=$PATH:$TERMUX_STANDALONE_TOOLCHAIN/bin
 
@@ -216,7 +235,7 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 				if [ ! -f $FILE_TO_REPLACE ]; then
 					termux_error_exit "No toolchain file to override: $FILE_TO_REPLACE"
 				fi
-				cp "$TERMUX_SCRIPTDIR/scripts/clang-pie-wrapper" $FILE_TO_REPLACE
+				cp "$TERMUX_SCRIPTDIR/clang-pie-wrapper" $FILE_TO_REPLACE
 				sed -i "s/COMPILER/clang50$plusplus/" $FILE_TO_REPLACE
 				sed -i "s/CLANG_TARGET/$CLANG_TARGET/" $FILE_TO_REPLACE
 			done
@@ -267,7 +286,7 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 
 		local _LIBDIR=usr/lib
 		if [ $TERMUX_ARCH = x86_64 ]; then _LIBDIR+=64; fi
-		$TERMUX_ELF_CLEANER $_LIBDIR/*.so
+		#$TERMUX_ELF_CLEANER $_LIBDIR/*.so
 
 		# zlib is really version 1.2.8 in the Android platform (at least
 		# starting from Android 5), not older as the NDK headers claim.
@@ -305,7 +324,7 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 
 		cp "$_STL_LIBFILE" .
 		$STRIP --strip-unneeded $_STL_LIBFILE_NAME
-		$TERMUX_ELF_CLEANER $_STL_LIBFILE_NAME
+		#$TERMUX_ELF_CLEANER $_STL_LIBFILE_NAME
 		if [ $TERMUX_ARCH = "arm" ]; then
 			# Use a linker script to get libunwind.a.
 			echo 'INPUT(-lunwind -lc++_shared)' > libstdc++.so
@@ -314,6 +333,7 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 		fi
 	fi
 
+	export TERMUX_PKG_CONFIG_LIBDIR=$TERMUX_PREFIX/lib/pkgconfig
 	export PKG_CONFIG_LIBDIR="$TERMUX_PKG_CONFIG_LIBDIR"
 	# Create a pkg-config wrapper. We use path to host pkg-config to
 	# avoid picking up a cross-compiled pkg-config later on.
@@ -329,7 +349,118 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 	chmod +x "$PKG_CONFIG"
 }
 
+termux_step_setup_build () {
+	echo "Creating $TERMUX_PKG_SRCDIR"
+	echo "From $TERMUX_PKG_BUILDER_DIR"
+	rm -rf $TERMUX_PKG_SRCDIR
+	mkdir -p $TERMUX_PKG_SRCDIR
+	cp -r $TERMUX_PKG_BUILDER_DIR/* $TERMUX_PKG_SRCDIR
+}
+
+termux_step_configure_autotools () {
+	echo "$TERMUX_PKG_SRCDIR/configure"
+	if [ ! -e "$TERMUX_PKG_SRCDIR/configure" ]; then return; fi
+
+	DISABLE_STATIC="--disable-static"
+	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--enable-static/}" ]; then
+		# Do not --disable-static if package explicitly enables it (e.g. gdb needs enable-static to build)
+		DISABLE_STATIC=""
+	fi
+
+	DISABLE_NLS="--disable-nls"
+	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--enable-nls/}" ]; then
+		# Do not --disable-nls if package explicitly enables it (for gettext itself)
+		DISABLE_NLS=""
+	fi
+
+	ENABLE_SHARED="--enable-shared"
+	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--disable-shared/}" ]; then
+		ENABLE_SHARED=""
+	fi
+	HOST_FLAG="--host=$TERMUX_HOST_PLATFORM"
+	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--host=/}" ]; then
+		HOST_FLAG=""
+	fi
+	LIBEXEC_FLAG="--libexecdir=$TERMUX_PREFIX/libexec"
+        if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--libexecdir=/}" ]; then
+                LIBEXEC_FLAG=""
+        fi
+
+	# Some packages provides a $PKG-config script which some configure scripts pickup instead of pkg-config:
+	mkdir "$TERMUX_PKG_TMPDIR/config-scripts"
+	for f in $TERMUX_PREFIX/bin/*config; do
+		test -f "$f" && cp "$f" "$TERMUX_PKG_TMPDIR/config-scripts"
+	done
+	export PATH=$TERMUX_PKG_TMPDIR/config-scripts:$PATH
+
+	# Avoid gnulib wrapping of functions when cross compiling. See
+	# http://wiki.osdev.org/Cross-Porting_Software#Gnulib
+	# https://gitlab.com/sortix/sortix/wikis/Gnulib
+	# https://github.com/termux/termux-packages/issues/76
+	local AVOID_GNULIB=""
+	AVOID_GNULIB+=" ac_cv_func_calloc_0_nonnull=yes"
+	AVOID_GNULIB+=" ac_cv_func_chown_works=yes"
+	AVOID_GNULIB+=" ac_cv_func_getgroups_works=yes"
+	AVOID_GNULIB+=" ac_cv_func_malloc_0_nonnull=yes"
+	AVOID_GNULIB+=" ac_cv_func_realloc_0_nonnull=yes"
+	AVOID_GNULIB+=" am_cv_func_working_getline=yes"
+	AVOID_GNULIB+=" gl_cv_func_dup2_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_fcntl_f_dupfd_cloexec=yes"
+	AVOID_GNULIB+=" gl_cv_func_fcntl_f_dupfd_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_fnmatch_posix=yes"
+	AVOID_GNULIB+=" gl_cv_func_getcwd_abort_bug=no"
+	AVOID_GNULIB+=" gl_cv_func_getcwd_null=yes"
+	AVOID_GNULIB+=" gl_cv_func_getcwd_path_max=yes"
+	AVOID_GNULIB+=" gl_cv_func_getcwd_posix_signature=yes"
+	AVOID_GNULIB+=" gl_cv_func_gettimeofday_clobber=no"
+	AVOID_GNULIB+=" gl_cv_func_gettimeofday_posix_signature=yes"
+	AVOID_GNULIB+=" gl_cv_func_link_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_lstat_dereferences_slashed_symlink=yes"
+	AVOID_GNULIB+=" gl_cv_func_malloc_0_nonnull=yes"
+	AVOID_GNULIB+=" gl_cv_func_memchr_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_mkdir_trailing_dot_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_mkdir_trailing_slash_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_mkfifo_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_realpath_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_select_detects_ebadf=yes"
+	AVOID_GNULIB+=" gl_cv_func_snprintf_posix=yes"
+	AVOID_GNULIB+=" gl_cv_func_snprintf_retval_c99=yes"
+	AVOID_GNULIB+=" gl_cv_func_snprintf_truncation_c99=yes"
+	AVOID_GNULIB+=" gl_cv_func_stat_dir_slash=yes"
+	AVOID_GNULIB+=" gl_cv_func_stat_file_slash=yes"
+	AVOID_GNULIB+=" gl_cv_func_strerror_0_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_symlink_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_tzset_clobber=no"
+	AVOID_GNULIB+=" gl_cv_func_unlink_honors_slashes=yes"
+	AVOID_GNULIB+=" gl_cv_func_unlink_honors_slashes=yes"
+	AVOID_GNULIB+=" gl_cv_func_vsnprintf_posix=yes"
+	AVOID_GNULIB+=" gl_cv_func_vsnprintf_zerosize_c99=yes"
+	AVOID_GNULIB+=" gl_cv_func_wcwidth_works=yes"
+	AVOID_GNULIB+=" gl_cv_func_working_getdelim=yes"
+	AVOID_GNULIB+=" gl_cv_func_working_mkstemp=yes"
+	AVOID_GNULIB+=" gl_cv_func_working_mktime=yes"
+	AVOID_GNULIB+=" gl_cv_func_working_strerror=yes"
+	AVOID_GNULIB+=" gl_cv_header_working_fcntl_h=yes"
+	AVOID_GNULIB+=" gl_cv_C_locale_sans_EILSEQ=yes"
+
+	# NOTE: We do not want to quote AVOID_GNULIB as we want word expansion.
+	env $AVOID_GNULIB "$TERMUX_PKG_SRCDIR/configure" \
+		--disable-dependency-tracking \
+		--prefix=$TERMUX_PREFIX \
+		--disable-rpath --disable-rpath-hack \
+		$HOST_FLAG \
+		$TERMUX_PKG_EXTRA_CONFIGURE_ARGS \
+		$DISABLE_NLS \
+		$ENABLE_SHARED \
+		$DISABLE_STATIC \
+		$LIBEXEC_FLAG
+
+	$TERMUX_PKG_BUILDER_SCRIPT
+}
+
 termux_step_setup_variables "$@"
 termux_step_setup_toolchain
-cd ruby
+termux_step_setup_build
+termux_step_configure_autotools
+
 
