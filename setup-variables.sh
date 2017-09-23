@@ -40,6 +40,7 @@ termux_step_setup_variables() {
 		fi
 	fi
 	TERMUX_PKG_BUILDER_SCRIPT=$TERMUX_PKG_BUILDER_DIR/build.sh
+	export TERMUX_PKG_BUILDER_DIR
 
 	if [ "x86_64" = "$TERMUX_ARCH" ] || [ "aarch64" = "$TERMUX_ARCH" ]; then
 		TERMUX_ARCH_BITS=64
@@ -355,11 +356,19 @@ termux_step_setup_build () {
 	rm -rf $TERMUX_PKG_SRCDIR
 	mkdir -p $TERMUX_PKG_SRCDIR
 	cp -r $TERMUX_PKG_BUILDER_DIR/* $TERMUX_PKG_SRCDIR
+	cd $TERMUX_PKG_BUILDDIR
 }
 
 termux_step_configure_autotools () {
-	echo "$TERMUX_PKG_SRCDIR/configure"
 	if [ ! -e "$TERMUX_PKG_SRCDIR/configure" ]; then return; fi
+
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS+="ac_cv_func_setgroups=no ac_cv_func_setresuid=no ac_cv_func_setreuid=no --enable-rubygems --disable-install-rdoc"
+# The gdbm module seems to be very little used:
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" --without-gdbm"
+# Do not link in libcrypt.so if available (now in disabled-packages):
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" ac_cv_lib_crypt_crypt=no"
+# Fix DEPRECATED_TYPE macro clang compatibility:
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" rb_cv_type_deprecated=x"
 
 	DISABLE_STATIC="--disable-static"
 	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--enable-static/}" ]; then
