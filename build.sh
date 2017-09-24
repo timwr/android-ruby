@@ -14,7 +14,7 @@ termux_step_setup_variables() {
 	: "${TERMUX_MAKE_PROCESSES:="$(nproc)"}"
 	: "${TERMUX_TOPDIR:="$HOME/.build"}"
 	: "${TERMUX_ARCH:="aarch64"}" # arm, aarch64, i686 or x86_64.
-	: "${TERMUX_PREFIX:="/data/data/com.termux/files/usr"}"
+	: "${TERMUX_PREFIX:="/data/local/tmp"}"
 	: "${TERMUX_ANDROID_HOME:="/data/data/com.termux/files/home"}"
 	: "${TERMUX_DEBUG:=""}"
 	: "${TERMUX_PKG_API_LEVEL:="21"}"
@@ -351,12 +351,12 @@ if [ "$TERMUX_PKG_CLANG" = "no" ]; then
 }
 
 termux_step_setup_build () {
-	echo "Creating $TERMUX_PKG_SRCDIR"
-	echo "From $TERMUX_PKG_BUILDER_DIR"
+	echo "Using $TERMUX_PKG_BUILDER_DIR"
 	rm -rf $TERMUX_PKG_SRCDIR
 	mkdir -p $TERMUX_PKG_SRCDIR
 	cp -r $TERMUX_PKG_BUILDER_DIR/* $TERMUX_PKG_SRCDIR
-	cd $TERMUX_PKG_BUILDDIR
+	echo "Created $TERMUX_PKG_SRCDIR"
+	cd $TERMUX_PKG_SRCDIR
 }
 
 termux_step_configure_autotools () {
@@ -464,6 +464,9 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" rb_cv_type_deprecated=x"
 		$DISABLE_STATIC \
 		$LIBEXEC_FLAG
 
+}
+
+termux_step_make () {
 	$TERMUX_PKG_BUILDER_SCRIPT
 }
 
@@ -471,5 +474,6 @@ termux_step_setup_variables "$@"
 termux_step_setup_toolchain
 termux_step_setup_build
 termux_step_configure_autotools
+termux_step_make
 
 
