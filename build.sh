@@ -129,6 +129,14 @@ termux_step_setup_variables() {
 		 $TERMUX_PREFIX/{bin,etc,lib,libexec,share,tmp,include}
 }
 
+termux_step_build_sh () {
+	source "$TERMUX_PKG_BUILDER_SCRIPT"
+}
+
+termux_step_host_build () {
+	echo "."
+}
+
 termux_step_setup_toolchain() {
 
 	TERMUX_STANDALONE_TOOLCHAIN="$TERMUX_TOPDIR/_lib/${TERMUX_NDK_VERSION}-${TERMUX_ARCH}-${TERMUX_PKG_API_LEVEL}"
@@ -362,14 +370,6 @@ termux_step_setup_build () {
 termux_step_configure_autotools () {
 	if [ ! -e "$TERMUX_PKG_SRCDIR/configure" ]; then return; fi
 
-TERMUX_PKG_EXTRA_CONFIGURE_ARGS+="ac_cv_func_setgroups=no ac_cv_func_setresuid=no ac_cv_func_setreuid=no --enable-rubygems --disable-install-rdoc"
-# The gdbm module seems to be very little used:
-TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" --without-gdbm"
-# Do not link in libcrypt.so if available (now in disabled-packages):
-TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" ac_cv_lib_crypt_crypt=no"
-# Fix DEPRECATED_TYPE macro clang compatibility:
-TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" rb_cv_type_deprecated=x"
-
 	DISABLE_STATIC="--disable-static"
 	if [ "$TERMUX_PKG_EXTRA_CONFIGURE_ARGS" != "${TERMUX_PKG_EXTRA_CONFIGURE_ARGS/--enable-static/}" ]; then
 		# Do not --disable-static if package explicitly enables it (e.g. gdb needs enable-static to build)
@@ -456,10 +456,8 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" rb_cv_type_deprecated=x"
 	env $AVOID_GNULIB "$TERMUX_PKG_SRCDIR/configure" \
 		--disable-dependency-tracking \
 		--prefix=$TERMUX_PREFIX \
-		--disable-rpath --disable-rpath-hack \
 		$HOST_FLAG \
 		$TERMUX_PKG_EXTRA_CONFIGURE_ARGS \
-		$DISABLE_NLS \
 		$ENABLE_SHARED \
 		$DISABLE_STATIC \
 		$LIBEXEC_FLAG
@@ -467,10 +465,13 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" rb_cv_type_deprecated=x"
 }
 
 termux_step_make () {
-	$TERMUX_PKG_BUILDER_SCRIPT
+	make
+	make install
 }
 
 termux_step_setup_variables "$@"
+termux_step_build_sh
+termux_step_host_build
 termux_step_setup_toolchain
 termux_step_setup_build
 termux_step_configure_autotools
