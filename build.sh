@@ -471,9 +471,9 @@ termux_step_make () {
 
 termux_step_setup_variables "$@"
 termux_step_build_sh
+termux_step_setup_build
 termux_step_host_build
 termux_step_setup_toolchain
-termux_step_setup_build
 termux_step_configure_autotools
 termux_step_make
 
